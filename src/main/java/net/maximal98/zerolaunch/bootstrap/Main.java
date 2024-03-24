@@ -238,7 +238,7 @@ public class Main {
 		System.out.println( "packing assets." );
 
 		List<String> assetEntryList = new ArrayList<>();
-		ByteArrayOutputStream assetByteAStream = new ByteArrayOutputStream();
+		ByteArrayOutputStream assetByteAStream = new ByteArrayOutputStream(18000000); //TODO (MAJOR): this doesn't work. the array only ever reaches 17508787 bytes in length, truncating the zip archive regardless of whatever i set its size to. i'll fix it tomorrow.
 		ZipOutputStream assetZipStream = new ZipOutputStream( assetByteAStream );
 		assetZipStream.setMethod(ZipOutputStream.DEFLATED);
 		assetZipStream.setLevel(Deflater.NO_COMPRESSION);
@@ -278,7 +278,8 @@ public class Main {
 			}
 		}
 		outputJarStream.putNextEntry( new ZipEntry("assets.zip") );
-		outputJarStream.write(assetByteAStream.toByteArray());
+		byte[] assetByteArray = assetByteAStream.toByteArray();
+		outputJarStream.write(assetByteArray);
 		entryList.add("assets.zip");
 		outputJarStream.close();
 		System.out.println("done!");
