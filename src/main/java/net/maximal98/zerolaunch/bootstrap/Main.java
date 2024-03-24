@@ -23,22 +23,23 @@ import java.util.jar.Attributes;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 import java.util.jar.Manifest;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
+import java.util.zip.*;
 
 public class Main {
-	public final static String LOADER_CLASS_DEFAULT = "fix me";
+	public final static String LOADER_CLASS_DEFAULT = "some epic symbol that can't exist as a file name";
 	public final static String MAIN_CLASS_DEFAULT =   "net.minecraft.client.main.Main";
 	//ULTIMATE TODO: make gui for lazy/normal people
 	public static void main(String[] args) throws IOException, NoSuchAlgorithmException {
 		String launcherPath = "error";
 		String loaderClass;
 		String mainClass;
+		boolean checkHashes = true;
 		OptionParser optionParser = new OptionParser();
 		optionParser.accepts("d").withOptionalArg();
 		optionParser.accepts("l").withOptionalArg();
 		optionParser.accepts("m").withOptionalArg();
 		optionParser.accepts("h");
+		optionParser.accepts("s");
 		OptionSet options = optionParser.parse(args);
 
 		if( options.has("h")) {
@@ -47,7 +48,10 @@ public class Main {
 			System.out.println("\t-d\tPrism/Poly/Multi launcher directory");
 			System.out.println("\t-l\tpath to loader class\t(advanced use)");
 			System.out.println("\t-m\tcustom main class\t(advanced use)");
+			System.out.println("\t-s\tdo not check hashes of libraries and assets (better performance)");
 		}
+		if( options.has("s") )
+			checkHashes = false;
 
 		if ( !options.has("d" ) ) {
 			System.out.println("-d is a required option.");
@@ -73,7 +77,7 @@ public class Main {
 			mainClass = options.valueOf("m").toString();
 		}
 
-		if( loaderClass.equals(LOADER_CLASS_DEFAULT) && !( new File(loaderClass).exists() ) ) {
+		if( !loaderClass.equals(LOADER_CLASS_DEFAULT) && !( new File(loaderClass).exists() ) ) {
 			System.out.println("/!\\ custom loader class does not exist!");
 			System.out.println("/!\\ using default loader...");
 			System.out.println("/!\\ if you set a custom main class, this probably wont work!");
@@ -157,8 +161,13 @@ public class Main {
 		outputManifest.getMainAttributes().put( Attributes.Name.MANIFEST_VERSION, "1.0" );
 		outputManifest.getMainAttributes().put(Attributes.Name.MAIN_CLASS, mainClass);
 
-		File outputJar = new File( mainPackage.name + "_" + mainPackage.version + ".jar" );
-		JarOutputStream outputJarStream = new JarOutputStream( Files.newOutputStream( outputJar.toPath() ), outputManifest );
+		Path outputJar = Paths.get( mainPackage.name + "_" + mainPackage.version + ".jar" );
+		if(Files.exists(outputJar)) {
+			System.out.println("fart");
+			Files.move(outputJar, Paths.get( mainPackage.name+"_"+mainPackage.version+"ARCHIVED-"+System.currentTimeMillis()/1000L+".jar" ));
+		}
+
+		JarOutputStream outputJarStream = new JarOutputStream( Files.newOutputStream( outputJar ), outputManifest );
 		List<String> entryList = new ArrayList<>();
 
 		for ( Package packageObject : packageList ) {
@@ -196,13 +205,14 @@ public class Main {
 				mergeZipIntoJar( clientZipStream, outputJarStream, entryList, new String[]{ "META-INF" } );
 			}
 
-			//TODO: we never check the sha1 to see if the data is real
-			for (int iterator = 0; iterator < packageObject.libraries.length; iterator++) {
-				if( packageObject.libraries[iterator].downloads != null ) {
-					String name = packageObject.libraries[iterator].name; //TODO: caustic to the eyes
+			for (int i = 0; i < packageObject.libraries.length; i++) { //using "i" and co is ok in for loops (legally binding)
+				LibraryArrayEntry library = packageObject.libraries[i];
+				if(library.downloads != null ) {
+					String name = library.name; //TODO: still cluttered
 					System.out.println("loading library " + name + " into jar");
-					if( packageObject.libraries[iterator].downloads.artifact != null ) {
-						String URL = packageObject.libraries[iterator].downloads.artifact.url;
+					LibraryArtifact artifact = library.downloads.artifact;
+					if( artifact != null ) {
+						String URL = artifact.url;
 
 						String filePath = launcherPath
 								+ "/libraries/"
@@ -211,8 +221,8 @@ public class Main {
 								+ URL.substring(URL.lastIndexOf("/"));
 
 						Path libraryPath = Paths.get(filePath);
-						//TODO: what on gods green earth is this fucking code ↓↓↓↓
-						if( !( packageObject.libraries[iterator].downloads.artifact.sha1.equals( CalculateSHA1String( libraryPath ) ) ) )
+						if( checkHashes && !artifact.sha1.equals( CalculateSHA1String(libraryPath) )  )
+							//the fact .equals() has to exist is so fucking stupid
 							System.out.println(
 									"/!\\ library "+name+" has mismatched SHA-1!!\n" +
 									"This most likely means that these files have been tampered with!!"
@@ -222,12 +232,17 @@ public class Main {
 							mergeZipIntoJar(libraryZipStream, outputJarStream, entryList, new String[]{"META-INF", ".git"});
 						}
 					} else {
-						System.out.println( "\t/!\\library " + name + " has null artifact at iterator " + iterator );
+						System.out.println( "\t/!\\library " + name + " has null artifact at iterator " + i );
 					}
 				}
 			}
 		}
-		System.out.println( "loading assets into jar file." );
+		System.out.println( "packing assets." );
+
+		ByteArrayOutputStream assetByteAStream = new ByteArrayOutputStream();
+		ZipOutputStream assetZipStream = new ZipOutputStream( assetByteAStream );
+		assetZipStream.setMethod(ZipOutputStream.DEFLATED);
+		assetZipStream.setLevel(Deflater.NO_COMPRESSION);
 
 		for ( Package packageObject : packageList ) {
 			if (packageObject.assetIndex != null) {
@@ -248,25 +263,29 @@ public class Main {
 					String hashPath = "/" + asset.hash.substring(0, 2) + "/" + asset.hash;
 					String assetKey = assetIndex.getKey();
 					Path assetpath = Paths.get(launcherPath + "/assets/objects" + hashPath);
-					if( !asset.hash.equals( CalculateSHA1String( assetpath ) ) )
+					if( checkHashes && !asset.hash.equals( CalculateSHA1String( assetpath ) ) )
 						System.out.println("/!\\ asset "+assetKey+'('+hashPath+") has wrong hash compared to index!");
 					//TODO: possibly add a display where it's like "Packing Assets (000/579)" instead of this
 					if( assetKey.contains(".ogg") ) {
-						System.out.println("Adding File (Fast Mode): " + assetKey );
-						addFileIntoJar(assetpath, "assets/" + assetKey, outputJarStream, entryList);
+						System.out.println("Packing File (Fast Mode): " + assetKey );
+						addFileIntoZip(assetpath, "assets/" + assetKey, outputJarStream, entryList);
 					} else {
-						System.out.println("Adding File: " + assetKey );
-						addFileIntoJar(assetpath,"net/maximal98/zerolaunch/data/assets/objects"+hashPath,outputJarStream,entryList);
+						System.out.println("Packing File: " + assetKey );
+						addFileIntoZip(assetpath,hashPath,assetZipStream,entryList);
 					}
 				}
-				addFileIntoJar(indexPath, "net/maximal98/zerolaunch/data/assets/indexes/default.json", outputJarStream, entryList);
-				outputJarStream.close();
-				System.out.println("done!");
+				addFileIntoZip(indexPath, "net/maximal98/zerolaunch/data/assets/indexes/default.json", outputJarStream, entryList);
+				//TODO: handle theoretical case of multiple indexes (maybe just append?)
 			}
 		}
+		outputJarStream.putNextEntry( new ZipEntry("assets.zip") );
+		outputJarStream.write(assetByteAStream.toByteArray());
+		entryList.add("assets.zip");
+		outputJarStream.close();
+		System.out.println("done!");
 	}
 
-	private static void addFileIntoJar(Path FilePath, String JarPath, JarOutputStream outStream, List<String> entryList ) throws IOException {
+	private static void addFileIntoZip(Path FilePath, String JarPath, ZipOutputStream outStream, List<String> entryList ) throws IOException {
 		byte[] byteBuff = new byte[1024];
 		InputStream fileStream = Files.newInputStream( FilePath );
 		StringTokenizer pathTokenizer = new StringTokenizer( JarPath );
@@ -291,7 +310,7 @@ public class Main {
 		}
 		fileStream.close();
 	}
-	private static void mergeZipIntoJar(ZipInputStream inStream, JarOutputStream outStream, List<String> EntryList, String[] excludeArray ) throws IOException {
+	private static void mergeZipIntoJar(ZipInputStream inStream, ZipOutputStream outStream, List<String> EntryList, String[] excludeArray ) throws IOException {
 		byte[] byteBuff = new byte[1024];
 		for (ZipEntry entry; (entry = inStream.getNextEntry()) != null; ) {
 			boolean run = true;
