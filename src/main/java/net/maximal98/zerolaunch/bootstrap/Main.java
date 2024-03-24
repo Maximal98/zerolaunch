@@ -164,7 +164,7 @@ public class Main {
 		Path outputJar = Paths.get( mainPackage.name + "_" + mainPackage.version + ".jar" );
 		if(Files.exists(outputJar)) {
 			System.out.println("fart");
-			Files.move(outputJar, Paths.get( mainPackage.name+"_"+mainPackage.version+"ARCHIVED-"+System.currentTimeMillis()/1000L+".jar" ));
+			Files.move(outputJar, Paths.get( mainPackage.name+"_"+mainPackage.version+"-ARCHIVED-"+System.currentTimeMillis()/1000L+".jar" ));
 		}
 
 		JarOutputStream outputJarStream = new JarOutputStream( Files.newOutputStream( outputJar ), outputManifest );
