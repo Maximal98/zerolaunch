@@ -162,10 +162,8 @@ public class Main {
 		outputManifest.getMainAttributes().put(Attributes.Name.MAIN_CLASS, mainClass);
 
 		Path outputJar = Paths.get( mainPackage.name + "_" + mainPackage.version + ".jar" );
-		if(Files.exists(outputJar)) {
-			System.out.println("fart");
+		if(Files.exists(outputJar))
 			Files.move(outputJar, Paths.get( mainPackage.name+"_"+mainPackage.version+"-ARCHIVED-"+System.currentTimeMillis()/1000L+".jar" ));
-		}
 
 		JarOutputStream outputJarStream = new JarOutputStream( Files.newOutputStream( outputJar ), outputManifest );
 		List<String> entryList = new ArrayList<>();
@@ -239,6 +237,7 @@ public class Main {
 		}
 		System.out.println( "packing assets." );
 
+		List<String> assetEntryList = new ArrayList<>();
 		ByteArrayOutputStream assetByteAStream = new ByteArrayOutputStream();
 		ZipOutputStream assetZipStream = new ZipOutputStream( assetByteAStream );
 		assetZipStream.setMethod(ZipOutputStream.DEFLATED);
@@ -271,10 +270,10 @@ public class Main {
 						addFileIntoZip(assetpath, "assets/" + assetKey, outputJarStream, entryList);
 					} else {
 						System.out.println("Packing File: " + assetKey );
-						addFileIntoZip(assetpath,hashPath,assetZipStream,entryList);
+						addFileIntoZip(assetpath,"objects"+hashPath,assetZipStream,assetEntryList);
 					}
 				}
-				addFileIntoZip(indexPath, "net/maximal98/zerolaunch/data/assets/indexes/default.json", outputJarStream, entryList);
+				addFileIntoZip(indexPath, "indexes/default.json", assetZipStream, assetEntryList);
 				//TODO: handle theoretical case of multiple indexes (maybe just append?)
 			}
 		}
