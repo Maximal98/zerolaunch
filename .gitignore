@@ -35,4 +35,4 @@ build/
 .DS_Store
 
 /stuff/
-minecraft.jar
+minecraft_*.jar

@@ -1,17 +1,23 @@
 package net.maximal98.zerolaunch.bootstrap;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import joptsimple.OptionParser;
+import joptsimple.OptionSet;
 import net.maximal98.zerolaunch.bootstrap.objects.*;
 import net.maximal98.zerolaunch.bootstrap.objects.Package;
-import picocli.CommandLine.Option;
-
+//imported manually because it could have double meaning with java.lang.Package
+//change maybe?
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import javax.xml.bind.annotation.adapters.HexBinaryAdapter;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.DigestInputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.jar.Attributes;
 import java.util.jar.JarEntry;
@@ -21,17 +27,61 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 public class Main {
-	@Option(names = {"-D", "--launcher-directory"}, required = true, description = "The directory where Multi/Poly/Prism store their data")
-	static String launcherPath;
+	public final static String LOADER_CLASS_DEFAULT = "fix me";
+	public final static String MAIN_CLASS_DEFAULT =   "net.minecraft.client.main.Main";
+	//ULTIMATE TODO: make gui for lazy/normal people
+	public static void main(String[] args) throws IOException, NoSuchAlgorithmException {
+		String launcherPath = "error";
+		String loaderClass;
+		String mainClass;
+		OptionParser optionParser = new OptionParser();
+		optionParser.accepts("d").withOptionalArg();
+		optionParser.accepts("l").withOptionalArg();
+		optionParser.accepts("m").withOptionalArg();
+		optionParser.accepts("h");
+		OptionSet options = optionParser.parse(args);
 
-	//TODO: make these use the official loader class if none is given
-	@Option(names = {"-L", "--loader-class"}, description = "Path to class file of loader (advanced usage)")
-	static String loaderClass; //TODO: implement LoaderClass (-> Loader implement)
+		if( options.has("h")) {
+			System.out.println("zerolaunch - tool to bootstrap minecraft");
+			System.out.println("\t-h\tdisplay this message");
+			System.out.println("\t-d\tPrism/Poly/Multi launcher directory");
+			System.out.println("\t-l\tpath to loader class\t(advanced use)");
+			System.out.println("\t-m\tcustom main class\t(advanced use)");
+		}
 
-	@Option(names = {"-M", "--main-class"}, description = "main class to call in jar (advanced usage)")
-	static String mainClass;
+		if ( !options.has("d" ) ) {
+			System.out.println("-d is a required option.");
+			System.out.println("try -h to see available options");
+			System.exit(3);
+		} else if(!options.hasArgument("d")) {
+			System.out.println("-d requires an Argument");
+			System.out.println("try -h to see available options");
+			System.exit(3);
+		} else {
+			launcherPath = options.valueOf("d").toString();
+		}
 
-	public static void main(String[] args) throws IOException {
+		if (!options.has("l") || !options.hasArgument("l")){
+			loaderClass = LOADER_CLASS_DEFAULT;
+		} else {
+			loaderClass = options.valueOf("l").toString();
+		}
+
+		if (!options.has("m") || !options.hasArgument("m")) {
+			mainClass = MAIN_CLASS_DEFAULT;
+		} else {
+			mainClass = options.valueOf("m").toString();
+		}
+
+		if( loaderClass.equals(LOADER_CLASS_DEFAULT) && !( new File(loaderClass).exists() ) ) {
+			System.out.println("/!\\ custom loader class does not exist!");
+			System.out.println("/!\\ using default loader...");
+			System.out.println("/!\\ if you set a custom main class, this probably wont work!");
+			try {Thread.sleep(5000);}
+			catch (InterruptedException exception) { /*ok*/ }
+		}
+
+
 
 		ObjectMapper mapper = new ObjectMapper();
 
@@ -80,7 +130,8 @@ public class Main {
 		List<Package> removeList = new ArrayList<>();
 		List<Package> addList = new ArrayList<>();
 		dependencyList.add( mainPackage );
-		//we love recursive dependencies!!
+
+		//this wasn't hard to implement but it was kind of a brainfuck to think about so im leaving a comment here
 		while( !dependencyList.isEmpty() ) {
 			for ( Package packageObject : dependencyList ) {
 				if ( packageObject.requires != null ) {
@@ -104,7 +155,7 @@ public class Main {
 
 		Manifest outputManifest = new Manifest();
 		outputManifest.getMainAttributes().put( Attributes.Name.MANIFEST_VERSION, "1.0" );
-		outputManifest.getMainAttributes().put(Attributes.Name.MAIN_CLASS, "net.minecraft.client.main.Main");
+		outputManifest.getMainAttributes().put(Attributes.Name.MAIN_CLASS, mainClass);
 
 		File outputJar = new File( mainPackage.name + "_" + mainPackage.version + ".jar" );
 		JarOutputStream outputJarStream = new JarOutputStream( Files.newOutputStream( outputJar.toPath() ), outputManifest );
@@ -112,8 +163,10 @@ public class Main {
 
 		for ( Package packageObject : packageList ) {
 			if( packageObject.formatVersion != 1 ) {
-				System.out.println("\t\t\t[WARNING] meta file of " + packageObject.uid + ":" + packageObject.version + " is wrong version!");
-				System.out.println("\t\t\tBootstrapped JAR file will probably not work!!!");
+				System.out.println("\t\t\t/!\\ meta file of " + packageObject.uid + ":" + packageObject.version + " is wrong version!");
+				System.out.println("\t\t\t/!\\ Bootstrapped JAR file will probably not work!!!");
+				try {Thread.sleep(2500);}
+				catch( InterruptedException exception) {/*ok boss*/}
 				continue;
 			}
 			System.out.println("loading package " + packageObject.uid + ":" + packageObject.version + " into jar" );
@@ -143,9 +196,10 @@ public class Main {
 				mergeZipIntoJar( clientZipStream, outputJarStream, entryList, new String[]{ "META-INF" } );
 			}
 
+			//TODO: we never check the sha1 to see if the data is real
 			for (int iterator = 0; iterator < packageObject.libraries.length; iterator++) {
 				if( packageObject.libraries[iterator].downloads != null ) {
-					String name = packageObject.libraries[iterator].name;
+					String name = packageObject.libraries[iterator].name; //TODO: caustic to the eyes
 					System.out.println("loading library " + name + " into jar");
 					if( packageObject.libraries[iterator].downloads.artifact != null ) {
 						String URL = packageObject.libraries[iterator].downloads.artifact.url;
@@ -156,48 +210,56 @@ public class Main {
 								+ name.substring(name.indexOf(":")).replaceAll(":", "/")
 								+ URL.substring(URL.lastIndexOf("/"));
 
-						File libraryFile = new File(filePath);
-						if (libraryFile.exists()) {
-							ZipInputStream libraryZipStream = new ZipInputStream(Files.newInputStream(Paths.get(filePath)));
+						Path libraryPath = Paths.get(filePath);
+						//TODO: what on gods green earth is this fucking code ↓↓↓↓
+						if( !( packageObject.libraries[iterator].downloads.artifact.sha1.equals( CalculateSHA1String( libraryPath ) ) ) )
+							System.out.println(
+									"/!\\ library "+name+" has mismatched SHA-1!!\n" +
+									"This most likely means that these files have been tampered with!!"
+							);
+						if (Files.exists(libraryPath)) {
+							ZipInputStream libraryZipStream = new ZipInputStream(Files.newInputStream(libraryPath));
 							mergeZipIntoJar(libraryZipStream, outputJarStream, entryList, new String[]{"META-INF", ".git"});
 						}
 					} else {
-						System.out.println( "---library " + name + " has null artifact at iterator " + iterator );
+						System.out.println( "\t/!\\library " + name + " has null artifact at iterator " + iterator );
 					}
 				}
 			}
 		}
 		System.out.println( "loading assets into jar file." );
 
-		//Asset packing
 		for ( Package packageObject : packageList ) {
 			if (packageObject.assetIndex != null) {
 				Path indexPath = Paths.get(launcherPath + "/assets/indexes/" + mainPackage.assetIndex.id + ".json");
 
 				JsonNode assetNode = mapper.readTree( new File( launcherPath + "/assets/indexes/" + mainPackage.assetIndex.id + ".json" ) );
-				Iterator<Map.Entry<String, JsonNode>> assetFields = assetNode.get( "objects" ).fields();
+				Iterator<Map.Entry<String, JsonNode>> assetIterator = assetNode.get( "objects" ).fields();
 
-				if( !(assetFields.hasNext()) ) {
-					System.out.println("assetFields has no next()!!!");
+				if( !(assetIterator.hasNext()) ) {
+					System.out.println("assetIterator has no next()!!!");
 				}
-				while (assetFields.hasNext()) {
-					Map.Entry<String, JsonNode> assetIndex = assetFields.next();
+
+				while (assetIterator.hasNext()) {
+					Map.Entry<String, JsonNode> assetIndex = assetIterator.next();
 
 					Asset asset = mapper.convertValue( assetIndex.getValue(), Asset.class );
 
 					String hashPath = "/" + asset.hash.substring(0, 2) + "/" + asset.hash;
 					String assetKey = assetIndex.getKey();
+					Path assetpath = Paths.get(launcherPath + "/assets/objects" + hashPath);
+					if( !asset.hash.equals( CalculateSHA1String( assetpath ) ) )
+						System.out.println("/!\\ asset "+assetKey+'('+hashPath+") has wrong hash compared to index!");
+					//TODO: possibly add a display where it's like "Packing Assets (000/579)" instead of this
 					if( assetKey.contains(".ogg") ) {
-						System.out.println("Adding file (Fast Mode) " + assetKey);
-						addFileIntoJar(Paths.get(launcherPath + "/assets/objects" + hashPath), "assets/" + assetKey, outputJarStream, entryList);
+						System.out.println("Adding File (Fast Mode): " + assetKey );
+						addFileIntoJar(assetpath, "assets/" + assetKey, outputJarStream, entryList);
 					} else {
-						System.out.println("Adding file " + assetKey);
-						addFileIntoJar(Paths.get(launcherPath + "/assets/objects" + hashPath), "net/maximal98/zerolaunch/data/assets/objects" + hashPath, outputJarStream, entryList);
+						System.out.println("Adding File: " + assetKey );
+						addFileIntoJar(assetpath,"net/maximal98/zerolaunch/data/assets/objects"+hashPath,outputJarStream,entryList);
 					}
 				}
-
 				addFileIntoJar(indexPath, "net/maximal98/zerolaunch/data/assets/indexes/default.json", outputJarStream, entryList);
-
 				outputJarStream.close();
 				System.out.println("done!");
 			}
@@ -261,7 +323,7 @@ public class Main {
 		inStream.close();
 	}
 	private static int promptUser(String[] choices, String prompt ) {
-		char[] chars = new char[prompt.length() + 2]; //TODO: what kinda caveman uses char in 2024
+		char[] chars = new char[prompt.length() + 2];
 		Arrays.fill(chars, '-');
 		String separator = new String(chars);
 
@@ -283,5 +345,10 @@ public class Main {
 			}
 		}
 		return result;
+	}
+	private static String CalculateSHA1String( Path inputFile ) throws NoSuchAlgorithmException, IOException {
+		DigestInputStream digestStream = new DigestInputStream( Files.newInputStream( inputFile ), MessageDigest.getInstance("sha1") );
+		while( digestStream.read() != -1 ) {} //TODO: this is an IEEE certified bruh moment
+		return new HexBinaryAdapter().marshal( digestStream.getMessageDigest().digest() );
 	}
 }
