@@ -33,13 +33,15 @@ public class Main {
 		String launcherPath = "error";
 		String loaderClass;
 		String mainClass;
-		boolean checkHashes = true;
+		boolean checkHashes = false;
+		boolean trash = false;
 		OptionParser optionParser = new OptionParser();
 		optionParser.accepts("d").withOptionalArg();
 		optionParser.accepts("l").withOptionalArg();
 		optionParser.accepts("m").withOptionalArg();
 		optionParser.accepts("h");
 		optionParser.accepts("s");
+		optionParser.accepts("t");
 		OptionSet options = optionParser.parse(args);
 
 		if( options.has("h")) {
@@ -48,10 +50,11 @@ public class Main {
 			System.out.println("\t-d\tPrism/Poly/Multi launcher directory");
 			System.out.println("\t-l\tpath to loader class\t(advanced use)");
 			System.out.println("\t-m\tcustom main class\t(advanced use)");
-			System.out.println("\t-s\tdo not check hashes of libraries and assets (better performance)");
+			System.out.println("\t-s\tcheck hashes of libraries and assets (builds slower)");
+			System.out.println("\t-t\ttrash previous builds instead of keeping");
 		}
 		if( options.has("s") )
-			checkHashes = false;
+			checkHashes = true;
 
 		if ( !options.has("d" ) ) {
 			System.out.println("-d is a required option.");
@@ -61,34 +64,33 @@ public class Main {
 			System.out.println("-d requires an Argument");
 			System.out.println("try -h to see available options");
 			System.exit(3);
-		} else {
+		} else
 			launcherPath = options.valueOf("d").toString();
-		}
 
-		if (!options.has("l") || !options.hasArgument("l")){
+		if (!options.has("l") || !options.hasArgument("l"))
 			loaderClass = LOADER_CLASS_DEFAULT;
-		} else {
+		else
 			loaderClass = options.valueOf("l").toString();
-		}
 
-		if (!options.has("m") || !options.hasArgument("m")) {
+		if (!options.has("m") || !options.hasArgument("m"))
 			mainClass = MAIN_CLASS_DEFAULT;
-		} else {
+		else
 			mainClass = options.valueOf("m").toString();
-		}
 
-		if( !loaderClass.equals(LOADER_CLASS_DEFAULT) && !( new File(loaderClass).exists() ) ) {
-			System.out.println("/!\\ custom loader class does not exist!");
+		if(options.has("t"))
+			trash = true;
+
+		Path loaderPath = Paths.get(loaderClass);
+
+		if( !loaderClass.equals(LOADER_CLASS_DEFAULT) && !( Files.exists(loaderPath) ) ) {
+			System.out.println("/!\\ custom loader class ("+ loaderClass + ") does not exist!");
 			System.out.println("/!\\ using default loader...");
 			System.out.println("/!\\ if you set a custom main class, this probably wont work!");
 			try {Thread.sleep(5000);}
 			catch (InterruptedException exception) { /*ok*/ }
 		}
 
-
-
 		ObjectMapper mapper = new ObjectMapper();
-
 		PackageIndex index = mapper.readValue( new File( launcherPath + "/meta/index.json" ), PackageIndex.class );
 
 		if( index.formatVersion != 1 ) {
@@ -162,11 +164,18 @@ public class Main {
 		outputManifest.getMainAttributes().put(Attributes.Name.MAIN_CLASS, mainClass);
 
 		Path outputJar = Paths.get( mainPackage.name + "_" + mainPackage.version + ".jar" );
-		if(Files.exists(outputJar))
-			Files.move(outputJar, Paths.get( mainPackage.name+"_"+mainPackage.version+"-ARCHIVED-"+System.currentTimeMillis()/1000L+".jar" ));
+		if(Files.exists(outputJar)) {
+			if (trash)
+				Files.delete(outputJar);
+			else
+				Files.move(outputJar, Paths.get(mainPackage.name + "_" + mainPackage.version + "-ARCHIVED-" + System.currentTimeMillis() / 1000L + ".jar"));
+		}
 
 		JarOutputStream outputJarStream = new JarOutputStream( Files.newOutputStream( outputJar ), outputManifest );
 		List<String> entryList = new ArrayList<>();
+
+		if( !loaderClass.equals(LOADER_CLASS_DEFAULT) )
+			addFileIntoZip( loaderPath, "net/maximal98/zerolaunch/loader/Loader.class", outputJarStream, entryList );
 
 		for ( Package packageObject : packageList ) {
 			if( packageObject.formatVersion != 1 ) {
@@ -220,7 +229,6 @@ public class Main {
 
 						Path libraryPath = Paths.get(filePath);
 						if( checkHashes && !artifact.sha1.equals( CalculateSHA1String(libraryPath) )  )
-							//the fact .equals() has to exist is so fucking stupid
 							System.out.println(
 									"/!\\ library "+name+" has mismatched SHA-1!!\n" +
 									"This most likely means that these files have been tampered with!!"
@@ -230,18 +238,14 @@ public class Main {
 							mergeZipIntoJar(libraryZipStream, outputJarStream, entryList, new String[]{"META-INF", ".git"});
 						}
 					} else {
-						System.out.println( "\t/!\\library " + name + " has null artifact at iterator " + i );
+						System.out.println( "\t/!\\ library " + name + " has null artifact at iterator " + i );
 					}
 				}
 			}
 		}
 		System.out.println( "packing assets." );
 
-		List<String> assetEntryList = new ArrayList<>();
-		ByteArrayOutputStream assetByteAStream = new ByteArrayOutputStream(18000000); //TODO (MAJOR): this doesn't work. the array only ever reaches 17508787 bytes in length, truncating the zip archive regardless of whatever i set its size to. i'll fix it tomorrow.
-		ZipOutputStream assetZipStream = new ZipOutputStream( assetByteAStream );
-		assetZipStream.setMethod(ZipOutputStream.DEFLATED);
-		assetZipStream.setLevel(Deflater.NO_COMPRESSION);
+		//TODO: fuck it, were gonna do zipFile in the loader class
 
 		for ( Package packageObject : packageList ) {
 			if (packageObject.assetIndex != null) {
@@ -270,25 +274,24 @@ public class Main {
 						addFileIntoZip(assetpath, "assets/" + assetKey, outputJarStream, entryList);
 					} else {
 						System.out.println("Packing File: " + assetKey );
-						addFileIntoZip(assetpath,"objects"+hashPath,assetZipStream,assetEntryList);
+						addFileIntoZip(assetpath,"net/maximal98/zerolaunch/assets/objects"+hashPath,outputJarStream,entryList);
 					}
 				}
-				addFileIntoZip(indexPath, "indexes/default.json", assetZipStream, assetEntryList);
+				System.out.println("Packing index");
+				addFileIntoZip(indexPath, "net/maximal98/zerolaunch/assets/indexes/default.json", outputJarStream, entryList);
 				//TODO: handle theoretical case of multiple indexes (maybe just append?)
 			}
 		}
-		outputJarStream.putNextEntry( new ZipEntry("assets.zip") );
-		byte[] assetByteArray = assetByteAStream.toByteArray();
-		outputJarStream.write(assetByteArray);
-		entryList.add("assets.zip");
+		System.out.println("closing JAR");
 		outputJarStream.close();
-		System.out.println("done!");
+		System.out.println("done");
 	}
 
-	private static void addFileIntoZip(Path FilePath, String JarPath, ZipOutputStream outStream, List<String> entryList ) throws IOException {
+	//TODO (not really): ditch ZipStream in favor of ZipFile?
+	private static void addFileIntoZip(Path FilePath, String ZipPath, ZipOutputStream outStream, List<String> entryList ) throws IOException {
 		byte[] byteBuff = new byte[1024];
 		InputStream fileStream = Files.newInputStream( FilePath );
-		StringTokenizer pathTokenizer = new StringTokenizer( JarPath );
+		StringTokenizer pathTokenizer = new StringTokenizer( ZipPath );
 		while( pathTokenizer.hasMoreElements() ) {
 			String token = pathTokenizer.nextToken();
 			boolean run = true;
@@ -300,11 +303,12 @@ public class Main {
 			}
 			if( run ) {
 				outStream.putNextEntry(new ZipEntry(token));
-				if (JarPath.endsWith(token)) {
+				if (ZipPath.endsWith(token)) {
 					for (int bytesRead; (bytesRead = fileStream.read(byteBuff)) != -1; ) {
 						outStream.write(byteBuff, 0, bytesRead);
 					}
 				}
+				outStream.closeEntry();
 				entryList.add(token);
 			}
 		}
